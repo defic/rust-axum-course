@@ -7,6 +7,7 @@ use crate::log::log_request;
 use crate::model::ModelController;
 use axum::extract::{Path, Query};
 use axum::http::{Method, Request, Uri};
+use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, get_service};
 use axum::{middleware, Json, Router};
@@ -28,18 +29,17 @@ async fn main() -> Result<()> {
 	// Initialize ModelController.
 	let mc = ModelController::new().await?;
 
-	let routes_apis = web::routes_tickets::routes(mc.clone())
-		.route_layer(middleware::from_fn(web::mw_auth::mw_require_auth));
+	let routes_apis = web::routes_tickets::routes(mc.clone());
 
 	let routes_all = Router::new()
-		.merge(routes_hello())
-		.merge(web::routes_login::routes())
 		.nest("/api", routes_apis)
-		.layer(middleware::map_response(main_response_mapper))
 		.layer(middleware::from_fn_with_state(
 			mc.clone(),
 			web::mw_auth::mw_ctx_resolver,
 		))
+		.merge(routes_hello())
+		.merge(web::routes_login::routes())
+		.layer(middleware::from_fn(main_req_response_mapper))
 		.layer(CookieManagerLayer::new())
 		.fallback_service(routes_static());
 
@@ -55,14 +55,18 @@ async fn main() -> Result<()> {
 	Ok(())
 }
 
-async fn main_response_mapper(
-	ctx: Option<Ctx>,
+
+async fn main_req_response_mapper<B>(
 	uri: Uri,
 	req_method: Method,
-	res: Response,
+	req: Request<B>,
+	next: Next<B>,
 ) -> Response {
-	println!("->> {:<12} - main_response_mapper", "RES_MAPPER");
+	println!();
+	println!("->> {:<12} - main_req_response_mapper", "REQ_RES_MAPPER");
+	let res = next.run(req).await;
 	let uuid = Uuid::new_v4();
+	let ctx = res.extensions().get::<Ctx>().cloned();
 
 	// -- Get the eventual response error.
 	let service_error = res.extensions().get::<Error>();
